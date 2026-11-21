@@ -178,115 +178,113 @@ sudo pfctl -s References
 - 这个启动项会出现在 `sfltool dumpbtm` 和 **System Settings → General → Login Items & Extensions** 里，是你自己加的
 - 每次系统更新后，检查 `/etc/pf.conf` 里那两行还在不在
 
-## 7. 离线安装浏览器和工具 + Little Snitch 规则
+## 7. Little Snitch：关掉苹果默认规则，Alert Mode 逐个决定
 
-### 7.1 离线安装与验证签名
-- 在另一台电脑上从官网下载：Brave、Zen、Little Snitch（obdev.at）、Netiquette（objective-see.org），用 U 盘拷过来
-- 官网或 GitHub 发布页给了校验值的话，先核对（换成实际路径）：
-~~~
-shasum -a 256 /Volumes/U盘名/文件名.dmg
-~~~
-- 打开 dmg，把 App 拖进 Finder 的 **Applications**，然后逐个验证签名（App 可以从 Finder 直接拖进终端窗口，路径会自动填好）：
-~~~
-codesign --verify --deep --strict --verbose=2 "/Applications/Brave Browser.app"
-codesign -dv --verbose=4 "/Applications/Brave Browser.app" 2>&1 | grep Authority
-~~~
-  - 第一条应显示 `valid on disk` 和 `satisfies its Designated Requirement`
-  - 第二条列出的第一条 Authority 应该是开发者名字：Brave 是 Brave Software, Inc.，Little Snitch 是 Objective Development Software GmbH，Netiquette 是 Objective-See, LLC
-- 从 U 盘拷进来的文件不带"隔离"标记，Gatekeeper 第一次打开时不会检查，所以签名必须自己验
-- Netiquette 只是查看当前网络连接的工具，不用设置规则
+### 7.1 安装与模式
+- 安装 Little Snitch，批准系统扩展和网络扩展：**System Settings → Privacy & Security** 里点 **Allow**，以及 **General → Login Items & Extensions → Network Extensions** 里打开 Little Snitch
+- 首次启动时，**macOS Services** 和 **iCloud Services** 都不选；**Apple Apps** 和 **Third Party Apps** 也不要通过 **Rule Groups** 右边的 **+** 添加
+- 已经装好的话：在 **Rule Groups** 里取消勾选 **macOS Services** 和 **iCloud Services**
+- 模式选 **Alert Mode**：没有规则覆盖的连接会弹窗，你选 Allow 或 Deny 后会自动生成对应的规则
+- 出厂保护规则（带锁，不能编辑、不能删除，但可以停用）全部停用，由 7.3 里你自己的规则代替：
+  - Any Process：**allow local network**（两条）
+  - Any Process：**allow incoming ICMP connections**（两条）：只在 IPv6 关掉之后停用；IPv6 开着就保留
+  - configd：**allow local network**、**allow incoming UDP connections (dhcp-client)**
+  - mDNSResponder：**allow any outgoing connection**
+  - 规则列表里其他带锁的出厂规则也检查一遍
+- Little Snitch 自己检查更新时也会弹窗，选 Deny，改用离线安装包手动更新
 
-### 7.2 Little Snitch 基础设置
-- 安装时取消勾选 macOS 和 iCloud 相关的选项；安装后批准扩展：**System Settings → Privacy & Security** 里点 **Allow**，以及 **General → Login Items & Extensions → Network Extensions** 里打开 Little Snitch
-- 已经装好的话：在规则窗口左侧 **Rule Groups** 里关闭出厂规则组 **macOS Services**、**Apple Apps**（有 **iCloud Services** 的话也关掉）。这些组会放行所有系统后台进程和苹果 App
-- 模式：刚开始用 **Alert Mode**，熟悉每个进程在做什么；规则稳定后切到 **Silent Mode (Deny Connections)**，没有规则的连接一律静默拒绝
-- 固定只用一个 DNS 服务器，这样 DNS 只需要一条规则。先查当前的 DNS：
-~~~
-scutil --dns | grep nameserver
-~~~
-- 改成只用路由器的 IPv4 地址（家里的 FRITZ!Box 是 192.168.178.1），再确认：
+### 7.2 网络准备：DNS 固定为路由器、固定 IP
+- 只用路由器一个 DNS 服务器：
 ~~~
 networksetup -setdnsservers Wi-Fi 192.168.178.1
-scutil --dns | grep nameserver
 ~~~
-- 想恢复成自动分配：`networksetup -setdnsservers Wi-Fi empty`
-- 可选：在 FRITZ!Box 的 Internet → Account Information → DNS Server（德语界面是 Internet → Zugangsdaten → DNS-Server）里开启 DNS over TLS，运营商就看不到 DNS 查询内容
-- 注意：scutil 输出里以 2a02 开头的是公网 IPv6 地址，能对应到你家的网络连接，贴截图时要打码
+- 固定 IP（选在 FRITZ!Box 自动分配范围 .20 到 .200 之外），不用 DHCP 就不需要传入规则：
+~~~
+networksetup -setmanual Wi-Fi 192.168.178.10 255.255.255.0 192.168.178.1
+~~~
+- 可选，关闭 IPv6（关掉后才能停用 ICMP 那两条）：
+~~~
+networksetup -setv6off Wi-Fi
+~~~
+- 检查：
+~~~
+networksetup -getinfo Wi-Fi
+ipconfig getifaddr en0
+netstat -rn -f inet | grep default
+~~~
+  - getinfo 显示 Manual Configuration、`192.168.178.10`、Router `192.168.178.1`
+  - getifaddr 显示 `192.168.178.10`；默认路由经由 `192.168.178.1`
+  - 两者对不上时：先运行 `networksetup -setdhcp Wi-Fi`，再把上面的 setmanual 和 setdnsservers 重跑一遍；还不行就重启
+- **不要用 `ipconfig set …`**：它是测试命令，会在运行时盖掉网络设置，关开 WiFi 都清不掉
+- 连别的 WiFi 要用 DHCP 时：勾选回 configd 的 **allow incoming UDP connections (dhcp-client)**，再运行 `networksetup -setdhcp Wi-Fi`
 
-### 7.3 规则组 Basis（一直开着）
-- 新建规则组：点规则窗口左侧 **Rule Groups** 标题右边的 **+** → **Local Rule Group…** → Name 填 `Basis`，建好后确认已勾选启用
-- 新建规则：点主窗口工具栏的 **(+)**。下面四条的通用设置：
-  - **Process owner**：**System**（弹窗里进程名前有齿轮图标的就是系统进程）
-  - **Process identification**：保留身份校验（with identity check）
-  - **Action**：**Allow**
-  - **Direction**：**Outgoing**
-  - **Profile or group**：**Basis**
-  - 端口和协议要先点 **More details** 才会显示；Protocol 填协议号：TCP 是 6，UDP 是 17
+### 7.3 预先建好的放行规则（规则组 Basis）
+> Little Snitch 在你登录之前没法弹窗，这段时间里没有规则覆盖的连接会被直接拒绝。DNS、时间这类开机就要用的连接，所以要提前建好规则。
 
-**规则 1：mDNSResponder（DNS）**
-- **Process**：输入 `mDNSResponder`（会自动找到完整路径，也可以点文本框里的蓝色弹出按钮来选）
-- **Remote endpoint**：IP Addresses → `192.168.178.1`（没固定单一 DNS 的话，把 scutil 列出的 IPv6 局域网地址也加上，用逗号或空格分隔）
-- **Port**：`53`
-- **Protocol**：`6, 17`
+- 新建规则组：点 **Rule Groups** 标题右边的 **+** → **Local Rule Group…** → Name 填 `Basis`，建好后确认已勾选启用
+- 新建规则：点主窗口工具栏的 **(+)**；**Port** 和 **Protocol** 要先点 **More details** 才会显示；Protocol 填协议号：TCP 是 6，UDP 是 17
+- 方向：四条都选 **Outgoing**（由 Mac 发起连接，对方的应答会被一起放行）。不要选 **Incoming** 或 **Any Direction**；固定 IP 下不需要任何传入规则
 
-**规则 2：timed（时间同步）**
+**1. mDNSResponder（DNS）**
+
+| 字段 | 填写 |
+|---|---|
+| Process | `mDNSResponder` |
+| Process owner | System |
+| Process identification | with identity check |
+| Action | Allow |
+| Direction | Outgoing |
+| Remote endpoint | IP Addresses → `192.168.178.1` |
+| Port | `53` |
+| Protocol | `6, 17` |
+| Profile or group | Basis |
+
+**2. configd（网络配置）**
+
+| 字段 | 填写 |
+|---|---|
+| Process | `configd` |
+| Process owner | System |
+| Process identification | with identity check |
+| Action | Allow |
+| Direction | Outgoing |
+| Remote endpoint | Local Network |
+| Port | 不填（任意） |
+| Protocol | 不填（任意） |
+| Profile or group | Basis |
+
+**3. timed（时间同步）**
 - 先在 **System Settings → General → Date & Time** 里打开 **Set time and date automatically**，**Source** 填 `de.pool.ntp.org`
-- **Process**：`timed`
-- **Remote endpoint**：Domain → `pool.ntp.org`（子域名都包括在内；继续用苹果的话改选单个服务器 `time.apple.com`）
-- **Port**：`123`
-- **Protocol**：`17`
 
-**规则 3：trustd（证书吊销检查）**
-- **Process**：`trustd`
-- **Remote endpoint**：Domain → `ocsp.apple.com, ocsp2.apple.com`
-- **Port**：保持任意端口（端口只能填单个端口、一个范围或任意，主机已经限定好了）
-- **Protocol**：`6`
-- 弹窗里出现没有齿轮图标的 trustd（用户进程）时，再建一条同样的规则、Process owner 选 **Me**；或者在 **Settings → Security** 打开 **Allow Global Rule Editing**，Owner 选 **Anyone**，一条规则覆盖两种
+| 字段 | 填写 |
+|---|---|
+| Process | `timed` |
+| Process owner | System |
+| Process identification | with identity check |
+| Action | Allow |
+| Direction | Outgoing |
+| Remote endpoint | Domain → `pool.ntp.org` |
+| Port | `123` |
+| Protocol | `17` |
+| Profile or group | Basis |
 
-**规则 4：configd（DHCP，弹窗问到才建）**
-- 最简单：弹窗时选 **Allow**，规则范围选到端口 67
-- 手动建：**Process** `configd`；**Remote endpoint** IP Addresses → `192.168.178.0/24, 255.255.255.255`；**Port** `67`；**Protocol** `17`
+**4. trustd（证书吊销检查）**
 
-### 7.4 规则组 System Update（平时关闭）
-- 新建 Local Rule Group，Name 填 `System Update`，建好后**取消勾选**
-- 规则：**Process** 选 **Any Process**；**Process owner** 选 **System**；**Action** 选 **Allow**；**Remote endpoint** 选 Domain → `gdmf.apple.com, mesu.apple.com, gs.apple.com, gg.apple.com, ig.apple.com, xp.apple.com, updates.cdn-apple.com, updates-http.cdn-apple.com`；**Protocol** 填 `6`
-- 更新系统时勾选这个组，更新完立刻取消勾选
-- XProtect（苹果内置的恶意软件特征库）的更新走 iCloud 通道，不需要登录 Apple 账户。更新时用下面的命令查看当前版本、可用版本并触发更新，同时在 **Network Monitor** 里看是哪个进程在联网，把它也加进这个组：
-~~~
-xprotect version
-sudo xprotect check
-sudo xprotect update
-~~~
+| 字段 | 填写 |
+|---|---|
+| Process | `trustd` |
+| Process owner | System |
+| Process identification | with identity check |
+| Action | Allow |
+| Direction | Outgoing |
+| Remote endpoint | Domain → `ocsp.apple.com, ocsp2.apple.com` |
+| Port | 不填（任意） |
+| Protocol | `6` |
+| Profile or group | Basis |
 
-### 7.5 规则组 Deny Apple（可选，一直开着）
-- 新建 Local Rule Group，Name 填 `Deny Apple`
-- 把下面这些进程都建成 **Deny**、**Any Server** 的规则：apsd、cloudd、bird、akd、identityservicesd、imagent、locationd、parsecd、assistantd、analyticsd、rapportd、sharingd、networkserviceproxy、mdmclient、cloudconfigurationd
-- Silent Mode (Deny Connections) 下本来就会被拒绝，单独列出来是防止以后弹窗时手滑点了允许
+- 弹窗里出现没有齿轮图标的 trustd（用户进程）时，同样只允许这两个域名、方向 Outgoing，规则寿命选 **forever**
 
-### 7.6 浏览器规则
-- 新建 Local Rule Group，Name 填 `Browser`；两个浏览器的 **Process owner** 都选 **Me**
-
-**Brave：只放行 YouTube**
-1. **Process** `Brave Browser` → **Deny** → **Any Server**
-2. **Process** `Brave Browser` → **Allow** → Domain → `youtube.com, googlevideo.com, ytimg.com, ggpht.com`（视频流、缩略图和播放器文件、头像）
-- 指定了域名的规则优先级高于 Any Server，所以第 2 条会覆盖第 1 条
-- 页面或视频加载不全时，在 **Network Monitor** 里看被拦了哪些域名，常见的还有 gstatic.com、googleapis.com，按需放行
-- Brave 里 **Settings → Privacy and security → Security → Use secure DNS** 如果开着，要么放行它用的 DNS 服务器，要么关掉，否则域名解析也会被一起挡掉
-- Brave 自己的更新和广告过滤规则也要联网：要么额外放行 Brave 的服务器（具体域名在 Network Monitor 里能看到），要么定期用新的离线安装包手动更新
-
-**Zen：只放行 GitHub**
-1. **Process** `Zen` → **Deny** → **Any Server**
-2. **Process** `Zen` → **Allow** → Domain → `github.com, githubusercontent.com, githubassets.com`
-- 用 Codespaces 的话再加 `github.dev`；网页编辑器还缺的域名，在 Network Monitor 里看到被拦了再补
-
-### 7.7 验证
-- 在 **Network Monitor** 里确认 mDNSResponder、timed、trustd 的连接是允许状态
-- 测试 DNS，能返回 IP 地址就说明规则没问题：
-~~~
-dscacheutil -q host -a name github.com
-~~~
-- 别用 `dig` 测试：它自己发 DNS 请求，不经过 mDNSResponder，会被 Little Snitch 拦掉
-
+  
   
 # Brave 设置汇总（2026-11-21）
 
