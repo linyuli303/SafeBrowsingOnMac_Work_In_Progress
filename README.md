@@ -27,9 +27,11 @@ sudo hdiutil create -srcfolder "/Library/Application Support/Final Cut Pro" -for
 ## 3. 新装系统后恢复
 
 ```
+# sha：7f2461c25a894f74cdbc029f7022208420677f4ece7cbc8c85c5224aeefca771
 shasum -a 256 /Volumes/你的U盘/FinalCutPro.dmg
 hdiutil attach /Volumes/你的U盘/FinalCutPro.dmg
 sudo ditto "/Volumes/Final Cut Pro/Final Cut Pro.app" "/Applications/Final Cut Pro.app"
+sudo chown -R root:wheel "/Applications/Final Cut Pro.app"
 hdiutil detach "/Volumes/Final Cut Pro"
 ```
 
